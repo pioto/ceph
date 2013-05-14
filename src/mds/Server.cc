@@ -1494,8 +1494,6 @@ void Server::dispatch_slave_request(MDRequest *mdr)
 	  wrlocks.insert(lock);
 	  replycode = MMDSSlaveRequest::OP_WRLOCKACK;
 	  break;
-	default:
-	  assert(0);
 	}
 	
 	if (!mds->locker->acquire_locks(mdr, rdlocks, wrlocks, xlocks))
@@ -6212,9 +6210,12 @@ void Server::_rename_prepare(MDRequest *mdr,
   
   // guarantee stray dir is processed first during journal replay. unlink the old inode,
   // then link the source inode to destdn
-  if (destdnl->is_primary() && straydn->is_auth()) {
-    metablob->add_dir_context(straydn->get_dir());
-    metablob->add_dir(straydn->get_dir(), true);
+  if (destdnl->is_primary()) {
+    assert(straydn);
+    if (straydn->is_auth()) {
+      metablob->add_dir_context(straydn->get_dir());
+      metablob->add_dir(straydn->get_dir(), true);
+    }
   }
 
   // sub off target
@@ -6945,7 +6946,7 @@ void Server::do_rename_rollback(bufferlist &rbl, int master, MDRequest *mdr)
   bool force_journal_dest = false;
   if (in && in->is_dir() && srcdn->authority().first != whoami)
     force_journal_src = _need_force_journal(in, false);
-  if (target && target->is_dir())
+  if (in && target && target->is_dir())
     force_journal_dest = _need_force_journal(in, true);
   
   version_t srcdnpv = 0;
@@ -7093,15 +7094,19 @@ void Server::_rename_rollback_finish(Mutation *mut, MDRequest *mdr, CDentry *src
   if (srcdn) {
     CInode *in = srcdn->get_linkage()->get_inode();
     // update subtree map?
-    if (in && in->is_dir())
+    if (in && in->is_dir()) {
+      assert(destdn);
       mdcache->adjust_subtree_after_rename(in, destdn->get_dir(), true);
+    }
   }
 
   if (destdn) {
     CInode *oldin = destdn->get_linkage()->get_inode();
     // update subtree map?
-    if (oldin && oldin->is_dir())
+    if (oldin && oldin->is_dir()) {
+      assert(straydn);
       mdcache->adjust_subtree_after_rename(oldin, straydn->get_dir(), true);
+    }
   }
 
   if (mds->is_resolve()) {

@@ -208,15 +208,15 @@ public:
     Mutex::Locker l(lock);
     stop_deleting = true;
     /**
-     * If we are in DELETING_DIR or DELETED_DIR, there are in progress
+     * If we are in DELETING_DIR or CLEARING_DIR, there are in progress
      * operations we have to wait for before continuing on.  States
      * DELETED_DIR, QUEUED, and CANCELED either check for stop_deleting
      * prior to performing any operations or signify the end of the
      * deleting process.  We don't want to wait to leave the QUEUED
-     * state, because this might block the caller behind entire pg
-     * removals.
+     * state, because this might block the caller behind an entire pg
+     * removal.
      */
-    while (status == DELETING_DIR || status == DELETING_DIR)
+    while (status == DELETING_DIR || status == CLEARING_DIR)
       cond.Wait(lock);
     return status != DELETED_DIR;
   } ///< @return true if we don't need to recreate the collection
@@ -382,6 +382,11 @@ public:
   }
 
   // -- backfill_reservation --
+  enum {
+    BACKFILL_LOW = 0,   // backfill non-degraded PGs
+    BACKFILL_HIGH = 1,	// backfill degraded PGs
+    RECOVERY = AsyncReserver<pg_t>::MAX_PRIORITY  // log based recovery
+  };
   Finisher reserver_finisher;
   AsyncReserver<pg_t> local_reserver;
   AsyncReserver<pg_t> remote_reserver;
@@ -1233,6 +1238,7 @@ protected:
     void _process(Command *c) {
       osd->osd_lock.Lock();
       if (osd->is_stopping()) {
+	osd->osd_lock.Unlock();
 	delete c;
 	return;
       }
@@ -1318,7 +1324,6 @@ protected:
 
   void start_recovery_op(PG *pg, const hobject_t& soid);
   void finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue);
-  void defer_recovery(PG *pg);
   void do_recovery(PG *pg);
   bool _recover_now();
 

@@ -549,6 +549,7 @@ private:
 	version(0),
 	timeout(NULL),
 	sync_state(STATE_NONE),
+	crc(0),
 	crc_available(false),
 	attempts(0)
     { }
@@ -1451,6 +1452,8 @@ public:
     boost::scoped_ptr<MonitorStore> store;
 
     set<version_t> gvs;
+    map<version_t, set<pair<string,version_t> > > gv_map;
+
     version_t highest_last_pn;
     version_t highest_accepted_pn;
 

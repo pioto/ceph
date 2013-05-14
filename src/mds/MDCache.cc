@@ -7172,8 +7172,9 @@ int MDCache::path_traverse(MDRequest *mdr, Message *req, Context *fin,     // wh
 
     // make sure snaprealm parents are open...
     if (cur->snaprealm && !cur->snaprealm->open && mdr &&
-	!cur->snaprealm->open_parents(new C_MDS_RetryRequest(this, mdr)))
+	!cur->snaprealm->open_parents(_get_waiter(mdr, req, fin))) {
       return 1;
+    }
 
 
     // dentry
@@ -7371,6 +7372,7 @@ int MDCache::path_traverse(MDRequest *mdr, Message *req, Context *fin,     // wh
 	  mds->forward_message_mds(req, dauth.first);
 	
 	if (mds->logger) mds->logger->inc(l_mds_tfw);
+	assert(fin == NULL);
 	return 2;
       }    
     }
@@ -7903,8 +7905,8 @@ void MDCache::_find_ino_dir(inodeno_t ino, Context *fin, bufferlist& bl, int r)
   c->bl = bl;
   r = path_traverse(NULL, NULL, c, path, &trace, NULL, MDS_TRAVERSE_DISCOVER);
   if (r > 0)
-    return; 
-  delete c;  // path_traverse doesn't clean it up for us.
+    return;
+  delete c;  // path_traverse doesn't clean it up for us for r <= 0
   
   fin->finish(r);
   delete fin;
@@ -9193,7 +9195,7 @@ void MDCache::handle_discover(MDiscover *dis)
     cur = get_inode(dis->get_base_ino(), snapid);
     if (!cur && snapid != CEPH_NOSNAP) {
       cur = get_inode(dis->get_base_ino());
-      if (!cur->is_multiversion())
+      if (cur && !cur->is_multiversion())
 	cur = NULL;  // nope!
     }
     
@@ -10080,7 +10082,8 @@ CDir *MDCache::force_dir_fragment(CInode *diri, frag_t fg)
       src.push_back(pdir);
       adjust_dir_fragments(diri, src, parent, split, result, waiters, true);
       dir = diri->get_dirfrag(fg);
-      dout(10) << "force_dir_fragment result " << *dir << dendl;
+      if (dir)
+        dout(10) << "force_dir_fragment result " << *dir << dendl;
       return dir;
     }
     if (parent == frag_t())

@@ -1141,7 +1141,7 @@ static int do_export_diff(librbd::Image& image, const char *fromsnapname,
     __u8 tag = 'e';
     bufferlist bl;
     ::encode(tag, bl);
-    bl.write_fd(fd);
+    r = bl.write_fd(fd);
     if (r < 0)
       return r;
   }
@@ -1294,7 +1294,7 @@ static int do_import(librbd::RBD &rbd, librados::IoCtx& io_ctx,
   bool from_stdin = !strcmp(path, "-");
   if (from_stdin) {
     fd = 0;
-    size = 1 << *order;
+    size = 1ULL << *order;
   } else {
     fd = open(path, O_RDONLY);
 

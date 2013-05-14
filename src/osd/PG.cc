@@ -139,6 +139,7 @@ PG::PG(OSDService *o, OSDMapRef curmap,
     p.m_seed,
     p.get_split_bits(curmap->get_pg_num(_pool.id)),
     _pool.id),
+  map_lock("PG::map_lock"),
   osdmap_ref(curmap), pool(_pool),
   _lock("PG::_lock"),
   ref(0),
@@ -192,25 +193,6 @@ void PG::lock(bool no_lockdep)
   assert(!dirty_log);
 
   dout(30) << "lock" << dendl;
-}
-
-void PG::lock_with_map_lock_held(bool no_lockdep)
-{
-  _lock.Lock(no_lockdep);
-  // if we have unrecorded dirty state with the lock dropped, there is a bug
-  assert(!dirty_info);
-  assert(!dirty_big_info);
-  assert(!dirty_log);
-
-  dout(30) << "lock_with_map_lock_held" << dendl;
-}
-
-void PG::reassert_lock_with_map_lock_held()
-{
-  assert(_lock.is_locked());
-  osdmap_ref = osd->osdmap;
-
-  dout(30) << "reassert_lock_with_map_lock_held" << dendl;
 }
 
 std::string PG::gen_prefix() const
@@ -1767,6 +1749,36 @@ bool PG::op_has_sufficient_caps(OpRequestRef op)
   return cap;
 }
 
+void PG::take_op_map_waiters()
+{
+  Mutex::Locker l(map_lock);
+  for (list<OpRequestRef>::iterator i = waiting_for_map.begin();
+       i != waiting_for_map.end();
+       ) {
+    if (op_must_wait_for_map(get_osdmap_with_maplock(), *i)) {
+      break;
+    } else {
+      osd->op_wq.queue(make_pair(PGRef(this), *i));
+      waiting_for_map.erase(i++);
+    }
+  }
+}
+
+void PG::queue_op(OpRequestRef op)
+{
+  Mutex::Locker l(map_lock);
+  if (!waiting_for_map.empty()) {
+    // preserve ordering
+    waiting_for_map.push_back(op);
+    return;
+  }
+  if (op_must_wait_for_map(get_osdmap_with_maplock(), op)) {
+    waiting_for_map.push_back(op);
+    return;
+  }
+  osd->op_wq.queue(make_pair(PGRef(this), op));
+}
+
 void PG::do_request(OpRequestRef op)
 {
   // do any pending flush
@@ -1776,11 +1788,7 @@ void PG::do_request(OpRequestRef op)
     osd->reply_op_error(op, -EPERM);
     return;
   }
-  if (must_delay_request(op)) {
-    dout(20) << " waiting for map on " << op << dendl;
-    waiting_for_map.push_back(op);
-    return;
-  }
+  assert(!op_must_wait_for_map(get_osdmap(), op));
   if (can_discard_request(op)) {
     return;
   }
@@ -2118,7 +2126,6 @@ static void split_replay_queue(
 
 void PG::split_ops(PG *child, unsigned split_bits) {
   unsigned match = child->info.pgid.m_seed;
-  assert(waiting_for_map.empty());
   assert(waiting_for_all_missing.empty());
   assert(waiting_for_missing_object.empty());
   assert(waiting_for_degraded_object.empty());
@@ -2128,12 +2135,16 @@ void PG::split_ops(PG *child, unsigned split_bits) {
 
   osd->dequeue_pg(this, &waiting_for_active);
   split_list(&waiting_for_active, &(child->waiting_for_active), match, split_bits);
+  {
+    Mutex::Locker l(map_lock); // to avoid a race with the osd dispatch
+    split_list(&waiting_for_map, &(child->waiting_for_map), match, split_bits);
+  }
 }
 
 void PG::split_into(pg_t child_pgid, PG *child, unsigned split_bits)
 {
   child->update_snap_mapper_bits(split_bits);
-  child->osdmap_ref = osdmap_ref;
+  child->update_osdmap_ref(get_osdmap());
 
   child->pool = pool;
 
@@ -2184,12 +2195,6 @@ void PG::split_into(pg_t child_pgid, PG *child, unsigned split_bits)
   dirty_info = true;
   dirty_big_info = true;
   dirty_log = true;
-}
-
-void PG::defer_recovery()
-{
-  // TODOSAM: osd->osd-> not good
-  osd->osd->defer_recovery(this);
 }
 
 void PG::clear_recovery_state() 
@@ -4071,7 +4076,8 @@ void PG::classic_scrub()
  * scrubber.state encodes the current state of the scrub (refer to state diagram
  * for details).
  */
-void PG::chunky_scrub() {
+void PG::chunky_scrub()
+{
   // check for map changes
   if (scrubber.is_chunky_scrub_active()) {
     if (scrubber.epoch_start != info.history.same_interval_since) {
@@ -4154,7 +4160,7 @@ void PG::chunky_scrub() {
         scrubber.block_writes = true;
 
         // walk the log to find the latest update that affects our chunk
-        scrubber.subset_last_update = eversion_t();
+        scrubber.subset_last_update = log.tail;
         for (list<pg_log_entry_t>::iterator p = log.log.begin();
              p != log.log.end();
              ++p) {
@@ -4289,7 +4295,8 @@ void PG::scrub_clear_state()
   _scrub_clear_state();
 }
 
-bool PG::scrub_gather_replica_maps() {
+bool PG::scrub_gather_replica_maps()
+{
   assert(scrubber.waiting_on == 0);
   assert(_lock.is_locked());
 
@@ -5386,27 +5393,32 @@ bool PG::split_request(OpRequestRef op, unsigned match, unsigned bits)
   return false;
 }
 
-bool PG::must_delay_request(OpRequestRef op)
+bool PG::op_must_wait_for_map(OSDMapRef curmap, OpRequestRef op)
 {
   switch (op->request->get_type()) {
   case CEPH_MSG_OSD_OP:
     return !have_same_or_newer_map(
+      curmap,
       static_cast<MOSDOp*>(op->request)->get_map_epoch());
 
   case MSG_OSD_SUBOP:
     return !have_same_or_newer_map(
+      curmap,
       static_cast<MOSDSubOp*>(op->request)->map_epoch);
 
   case MSG_OSD_SUBOPREPLY:
     return !have_same_or_newer_map(
+      curmap,
       static_cast<MOSDSubOpReply*>(op->request)->map_epoch);
 
   case MSG_OSD_PG_SCAN:
     return !have_same_or_newer_map(
+      curmap,
       static_cast<MOSDPGScan*>(op->request)->map_epoch);
 
   case MSG_OSD_PG_BACKFILL:
     return !have_same_or_newer_map(
+      curmap,
       static_cast<MOSDPGBackfill*>(op->request)->map_epoch);
   }
   assert(0);
@@ -5416,7 +5428,7 @@ bool PG::must_delay_request(OpRequestRef op)
 void PG::take_waiters()
 {
   dout(10) << "take_waiters" << dendl;
-  requeue_ops(waiting_for_map);
+  take_op_map_waiters();
   for (list<CephPeeringEvtRef>::iterator i = peering_waiters.begin();
        i != peering_waiters.end();
        ++i) osd->queue_for_peering(this);
@@ -5511,7 +5523,7 @@ void PG::handle_advance_map(OSDMapRef osdmap, OSDMapRef lastmap,
   assert(lastmap->get_epoch() == osdmap_ref->get_epoch());
   assert(lastmap == osdmap_ref);
   dout(10) << "handle_advance_map " << newup << "/" << newacting << dendl;
-  osdmap_ref = osdmap;
+  update_osdmap_ref(osdmap);
   pool.update(osdmap);
   AdvMap evt(osdmap, lastmap, newup, newacting);
   recovery_state.handle_event(evt, rctx);
@@ -6205,11 +6217,13 @@ PG::RecoveryState::WaitRemoteBackfillReserved::WaitRemoteBackfillReserved(my_con
     pg->backfill_target, pg->get_osdmap()->get_epoch());
   if (con) {
     if ((con->features & CEPH_FEATURE_BACKFILL_RESERVATION)) {
+      unsigned priority = pg->is_degraded() ? OSDService::BACKFILL_HIGH
+	  : OSDService::BACKFILL_LOW;
       pg->osd->send_message_osd_cluster(
         new MBackfillReserve(
 	  MBackfillReserve::REQUEST,
 	  pg->info.pgid,
-	  pg->get_osdmap()->get_epoch()),
+	  pg->get_osdmap()->get_epoch(), priority),
 	con.get());
     } else {
       post_event(RemoteBackfillReserved());
@@ -6255,7 +6269,8 @@ PG::RecoveryState::WaitLocalBackfillReserved::WaitLocalBackfillReserved(my_conte
     pg->info.pgid,
     new QueuePeeringEvt<LocalBackfillReserved>(
       pg, pg->get_osdmap()->get_epoch(),
-      LocalBackfillReserved()));
+      LocalBackfillReserved()), pg->is_degraded() ? OSDService::BACKFILL_HIGH
+	 : OSDService::BACKFILL_LOW);
 }
 
 void PG::RecoveryState::WaitLocalBackfillReserved::exit()
@@ -6301,7 +6316,7 @@ PG::RecoveryState::RepWaitRecoveryReserved::RepWaitRecoveryReserved(my_context c
     pg->info.pgid,
     new QueuePeeringEvt<RemoteRecoveryReserved>(
       pg, pg->get_osdmap()->get_epoch(),
-      RemoteRecoveryReserved()));
+      RemoteRecoveryReserved()), OSDService::RECOVERY);
 }
 
 boost::statechart::result
@@ -6329,6 +6344,11 @@ PG::RecoveryState::RepWaitBackfillReserved::RepWaitBackfillReserved(my_context c
 {
   state_name = "Started/ReplicaActive/RepWaitBackfillReserved";
   context< RecoveryMachine >().log_enter(state_name);
+}
+
+boost::statechart::result 
+PG::RecoveryState::RepNotRecovering::react(const RequestBackfillPrio &evt)
+{
   PG *pg = context< RecoveryMachine >().pg;
 
   double ratio, max_ratio;
@@ -6343,8 +6363,9 @@ PG::RecoveryState::RepWaitBackfillReserved::RepWaitBackfillReserved(my_context c
       pg->info.pgid,
       new QueuePeeringEvt<RemoteBackfillReserved>(
         pg, pg->get_osdmap()->get_epoch(),
-        RemoteBackfillReserved()));
+        RemoteBackfillReserved()), evt.priority);
   }
+  return transit<RepWaitBackfillReserved>();
 }
 
 void PG::RecoveryState::RepWaitBackfillReserved::exit()
@@ -6421,7 +6442,7 @@ PG::RecoveryState::WaitLocalRecoveryReserved::WaitLocalRecoveryReserved(my_conte
     pg->info.pgid,
     new QueuePeeringEvt<LocalRecoveryReserved>(
       pg, pg->get_osdmap()->get_epoch(),
-      LocalRecoveryReserved()));
+      LocalRecoveryReserved()), OSDService::RECOVERY);
 }
 
 void PG::RecoveryState::WaitLocalRecoveryReserved::exit()

@@ -716,6 +716,7 @@ int RGWAccessKeyPool::generate_key(RGWUserAdminOpState& op_state, std::string *e
         set_err_msg(err_msg, "existing swift key in RGW system:" + id);
         return -EEXIST;
       }
+      break;
     case KEY_TYPE_S3:
       if (rgw_get_user_info_by_access_key(store, id, duplicate_check) >= 0) {
         set_err_msg(err_msg, "existing S3 key in RGW system:" + id);
@@ -991,7 +992,10 @@ int RGWAccessKeyPool::remove(RGWUserAdminOpState& op_state, std::string *err_msg
 RGWSubUserPool::RGWSubUserPool(RGWUser *usr)
 {
   subusers_allowed = (usr != NULL);
-  store = usr->get_store();
+  if (usr)
+    store = usr->get_store();
+  else
+    store = NULL;
   user = usr;
   subuser_map = NULL;
 }

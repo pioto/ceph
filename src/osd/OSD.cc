@@ -1579,10 +1579,7 @@ PG *OSD::_open_lock_pg(
 
   pg_map[pgid] = pg;
 
-  if (hold_map_lock)
-    pg->lock_with_map_lock_held(no_lockdep_check);
-  else
-    pg->lock(no_lockdep_check);
+  pg->lock(no_lockdep_check);
   pg->get("PGMap");  // because it's in pg_map
   return pg;
 }
@@ -1704,7 +1701,7 @@ PG *OSD::_lookup_lock_pg_with_map_lock_held(pg_t pgid)
   assert(osd_lock.is_locked());
   assert(pg_map.count(pgid));
   PG *pg = pg_map[pgid];
-  pg->lock_with_map_lock_held();
+  pg->lock();
   return pg;
 }
 
@@ -5094,7 +5091,7 @@ void OSD::do_split(PG *parent, set<pg_t>& childpgids, ObjectStore::Transaction& 
 {
   dout(10) << "do_split to " << childpgids << " on " << *parent << dendl;
 
-  parent->lock_with_map_lock_held();
+  parent->lock();
  
   // create and lock children
   map<pg_t,PG*> children;
@@ -5826,7 +5823,7 @@ void OSD::handle_pg_backfill_reserve(OpRequestRef op)
 	new PG::CephPeeringEvt(
 	  m->query_epoch,
 	  m->query_epoch,
-	  PG::RequestBackfill())));
+	  PG::RequestBackfillPrio(m->priority))));
   } else if (m->type == MBackfillReserve::GRANT) {
     pg->queue_peering_event(
       PG::CephPeeringEvtRef(
@@ -6230,15 +6227,6 @@ void OSD::finish_recovery_op(PG *pg, const hobject_t& soid, bool dequeue)
   recovery_wq.unlock();
 }
 
-void OSD::defer_recovery(PG *pg)
-{
-  dout(10) << "defer_recovery " << *pg << dendl;
-
-  // move pg to the end of the queue...
-  recovery_wq.queue(pg);
-}
-
-
 // =========================================================
 // OPS
 
@@ -6509,7 +6497,7 @@ void OSD::enqueue_op(PG *pg, OpRequestRef op)
 	   << " cost " << op->request->get_cost()
 	   << " latency " << latency
 	   << " " << *(op->request) << dendl;
-  op_wq.queue(make_pair(PGRef(pg), op));
+  pg->queue_op(op);
 }
 
 void OSD::OpWQ::_enqueue(pair<PGRef, OpRequestRef> item)
