@@ -659,7 +659,7 @@ Inode * Client::add_update_inode(InodeStat *st, utime_t from, MetaSession *sessi
       ldout(cct, 10) << " dir is open on empty dir " << in->ino << " with "
 		     << in->dir->dentry_map.size() << " entries, tearing down" << dendl;
       while (!in->dir->dentry_map.empty())
-	unlink(in->dir->dentry_map.begin()->second, true, false);
+	unlink(in->dir->dentry_map.begin()->second, true, true);
       close_dir(in->dir);
     }
   }  
