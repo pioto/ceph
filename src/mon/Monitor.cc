@@ -606,7 +606,7 @@ void Monitor::shutdown()
 
 void Monitor::bootstrap()
 {
-  dout(10) << "bootstrap" << dendl;
+  dout(9) << "bootstrap" << dendl;
 
   unregister_cluster_logger();
   cancel_probe_timeout();
@@ -638,9 +638,9 @@ void Monitor::bootstrap()
 
   // sync store
   if (g_conf->mon_compact_on_bootstrap) {
-    dout(10) << "bootstrap -- triggering compaction" << dendl;
+    dout(9) << "bootstrap -- triggering compaction" << dendl;
     store->compact();
-    dout(10) << "bootstrap -- finished compaction" << dendl;
+    dout(9) << "bootstrap -- finished compaction" << dendl;
   }
 
   // singleton monitor?
@@ -700,7 +700,7 @@ void Monitor::_add_bootstrap_peer_hint(string cmd, string args, ostream& ss)
 // called by bootstrap(), or on leader|peon -> electing
 void Monitor::reset()
 {
-  dout(10) << "reset" << dendl;
+  dout(9) << "reset" << dendl;
 
   timecheck_finish();
 
@@ -732,7 +732,7 @@ set<string> Monitor::get_sync_targets_names() {
  */
 void Monitor::reset_sync(bool abort)
 {
-  dout(10) << __func__ << dendl;
+  dout(9) << __func__ << dendl;
   // clear everything trim/sync related
   {
     map<entity_inst_t,Context*>::iterator iter = trim_timeouts.begin();
@@ -771,7 +771,7 @@ void Monitor::reset_sync(bool abort)
 
 void Monitor::sync_send_heartbeat(entity_inst_t &other, bool reply)
 {
-  dout(10) << __func__ << " " << other << " reply(" << reply << ")" << dendl;
+  dout(9) << __func__ << " " << other << " reply(" << reply << ")" << dendl;
   uint32_t op = (reply ? MMonSync::OP_HEARTBEAT_REPLY : MMonSync::OP_HEARTBEAT);
   MMonSync *msg = new MMonSync(op);
   messenger->send_message(msg, other);
@@ -779,7 +779,7 @@ void Monitor::sync_send_heartbeat(entity_inst_t &other, bool reply)
 
 void Monitor::handle_sync_start(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
 
   /* If we are not the leader, then some monitor picked us as the point of
    * entry to the quorum during its synchronization process. Therefore, we
@@ -798,7 +798,7 @@ void Monitor::handle_sync_start(MMonSync *m)
     if (!(m->flags & MMonSync::FLAG_REPLY_TO)) {
       msg->set_reply_to(m->get_source_inst());
     }
-    dout(10) << __func__ << " forward " << *m
+    dout(9) << __func__ << " forward " << *m
 	     << " to leader at " << leader << dendl;
     assert(g_conf->mon_sync_provider_kill_at != 1);
     messenger->send_message(msg, leader);
@@ -837,7 +837,7 @@ void Monitor::handle_sync_start(MMonSync *m)
       return;
     }
 
-    dout(10) << __func__ << " forward " << *m
+    dout(9) << __func__ << " forward " << *m
              << " to our sync leader at "
              << sync_leader->entity << dendl;
 
@@ -910,7 +910,7 @@ void Monitor::handle_sync_start(MMonSync *m)
         // Set the provider as the one that contacted us. He's in the
         // quorum, so he's up to the job (i.e., he's not synchronizing)
         msg->set_reply_to(m->get_source_inst());
-        dout(10) << __func__ << " set provider to " << msg->reply_to << dendl;
+        dout(9) << __func__ << " set provider to " << msg->reply_to << dendl;
       } else {
         // Then they must have gotten into the quorum, and boostrapped.
         // We should tell them to abort and bootstrap ourselves.
@@ -926,7 +926,7 @@ void Monitor::handle_sync_start(MMonSync *m)
       int n = _pick_random_quorum_mon(rank);
       if (n >= 0) {
         msg->set_reply_to(monmap->get_inst(n));
-        dout(10) << __func__ << " set quorum-based provider to "
+        dout(9) << __func__ << " set quorum-based provider to "
                  << msg->reply_to << dendl;
       } else {
         assert(0 == "We shouldn't get here!");
@@ -946,7 +946,7 @@ void Monitor::handle_sync_start(MMonSync *m)
 
 void Monitor::handle_sync_heartbeat(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
 
   entity_inst_t other = m->get_source_inst();
   if (!(sync_role & SYNC_ROLE_LEADER)
@@ -983,7 +983,7 @@ void Monitor::handle_sync_heartbeat(MMonSync *m)
 
 void Monitor::sync_finish(entity_inst_t &entity, bool abort)
 {
-  dout(10) << __func__ << " entity(" << entity << ")" << dendl;
+  dout(9) << __func__ << " entity(" << entity << ")" << dendl;
 
   Mutex::Locker l(trim_lock);
 
@@ -1009,7 +1009,7 @@ void Monitor::sync_finish(entity_inst_t &entity, bool abort)
   if (!trim_timeouts.empty())
     return;
 
-  dout(10) << __func__ << " no longer a sync leader" << dendl;
+  dout(9) << __func__ << " no longer a sync leader" << dendl;
   sync_role &= ~SYNC_ROLE_LEADER;
 
   // we may have been the leader, but by now we may no longer be.
@@ -1026,7 +1026,7 @@ void Monitor::sync_finish(entity_inst_t &entity, bool abort)
 
 void Monitor::handle_sync_finish(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
 
   entity_inst_t other = m->get_source_inst();
 
@@ -1048,7 +1048,7 @@ void Monitor::handle_sync_finish(MMonSync *m)
   // his sync has finished, so there is no use in scraping the whole thing
   // now. Therefore, just go along and acknowledge.
   if (!is_leader()) {
-    dout(10) << __func__ << " We are no longer the leader; reply nonetheless"
+    dout(9) << __func__ << " We are no longer the leader; reply nonetheless"
 	     << dendl;
   }
 
@@ -1159,7 +1159,7 @@ void Monitor::sync_timeout(entity_inst_t &entity)
 
     assert(0 == "Unable to find a new monitor to connect to. Not cool.");
   } else if (sync_role & SYNC_ROLE_PROVIDER) {
-    dout(10) << __func__ << " cleanup " << entity << dendl;
+    dout(9) << __func__ << " cleanup " << entity << dendl;
     sync_provider_cleanup(entity);
     return;
   } else
@@ -1168,7 +1168,7 @@ void Monitor::sync_timeout(entity_inst_t &entity)
 
 void Monitor::sync_provider_cleanup(entity_inst_t &entity)
 {
-  dout(10) << __func__ << " " << entity << dendl;
+  dout(9) << __func__ << " " << entity << dendl;
   if (sync_entities.count(entity) > 0) {
     sync_entities[entity]->cancel_timeout();
     sync_entities.erase(entity);
@@ -1183,7 +1183,7 @@ void Monitor::sync_provider_cleanup(entity_inst_t &entity)
 
 void Monitor::handle_sync_start_chunks(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
   assert(!(sync_role & SYNC_ROLE_REQUESTER));
 
   entity_inst_t other = m->get_source_inst();
@@ -1223,7 +1223,7 @@ void Monitor::handle_sync_start_chunks(MMonSync *m)
 
 void Monitor::handle_sync_chunk_reply(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
 
   entity_inst_t other = m->get_source_inst();
 
@@ -1248,7 +1248,7 @@ void Monitor::handle_sync_chunk_reply(MMonSync *m)
 
 void Monitor::sync_send_chunks(SyncEntity sync)
 {
-  dout(10) << __func__ << " entity(" << sync->entity << ")" << dendl;
+  dout(9) << __func__ << " entity(" << sync->entity << ")" << dendl;
 
   sync->cancel_timeout();
 
@@ -1296,7 +1296,7 @@ void Monitor::sync_send_chunks(SyncEntity sync)
 
 void Monitor::sync_requester_abort()
 {
-  dout(10) << __func__;
+  dout(9) << __func__;
   assert(state == STATE_SYNCHRONIZING);
   assert(sync_role == SYNC_ROLE_REQUESTER);
 
@@ -1362,6 +1362,7 @@ void Monitor::sync_store_init()
 
 void Monitor::sync_store_cleanup()
 {
+  dout(9) << __func__ << dendl;
   MonitorDBStore::Transaction t;
   t.erase("mon_sync", "in_sync");
   t.erase("mon_sync", "latest_monmap");
@@ -1386,7 +1387,7 @@ void Monitor::sync_start(entity_inst_t &other)
 {
   cancel_probe_timeout();
 
-  dout(10) << __func__ << " entity( " << other << " )" << dendl;
+  dout(9) << __func__ << " entity( " << other << " )" << dendl;
   if ((state == STATE_SYNCHRONIZING) && (sync_role == SYNC_ROLE_REQUESTER)) {
     dout(1) << __func__ << " already synchronizing; drop it" << dendl;
     return;
@@ -1455,7 +1456,7 @@ void Monitor::sync_start(entity_inst_t &other)
 
 void Monitor::sync_start_chunks(SyncEntity provider)
 {
-  dout(10) << __func__ << " provider(" << provider->entity << ")" << dendl;
+  dout(9) << __func__ << " provider(" << provider->entity << ")" << dendl;
 
   assert(sync_role == SYNC_ROLE_REQUESTER);
   assert(sync_state == SYNC_STATE_START);
@@ -1476,7 +1477,7 @@ void Monitor::sync_start_chunks(SyncEntity provider)
 
 void Monitor::sync_start_reply_timeout()
 {
-  dout(10) << __func__ << dendl;
+  dout(9) << __func__ << dendl;
 
   assert(state == STATE_SYNCHRONIZING);
   assert(sync_role == SYNC_ROLE_REQUESTER);
@@ -1491,7 +1492,7 @@ void Monitor::sync_start_reply_timeout()
 
 void Monitor::handle_sync_start_reply(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
 
   entity_inst_t other = m->get_source_inst();
 
@@ -1518,7 +1519,7 @@ void Monitor::handle_sync_start_reply(MMonSync *m)
   sync_leader->cancel_timeout();
 
   if (m->flags & MMonSync::FLAG_RETRY) {
-    dout(10) << __func__ << " retrying sync at a later time" << dendl;
+    dout(9) << __func__ << " retrying sync at a later time" << dendl;
     sync_role = SYNC_ROLE_NONE;
     sync_state = SYNC_STATE_NONE;
     sync_leader->set_timeout(new C_SyncStartRetry(this, sync_leader->entity),
@@ -1527,11 +1528,11 @@ void Monitor::handle_sync_start_reply(MMonSync *m)
   }
 
   if (m->flags & MMonSync::FLAG_REPLY_TO) {
-    dout(10) << __func__ << " leader told us to use " << m->reply_to
+    dout(9) << __func__ << " leader told us to use " << m->reply_to
              << " as sync provider" << dendl;
     sync_provider->entity = m->reply_to;
   } else {
-    dout(10) << __func__ << " synchronizing from leader at " << other << dendl;
+    dout(9) << __func__ << " synchronizing from leader at " << other << dendl;
     sync_provider->entity = other;
   }
 
@@ -1549,7 +1550,7 @@ out:
 
 void Monitor::handle_sync_heartbeat_reply(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
 
   entity_inst_t other = m->get_source_inst();
   if ((sync_role != SYNC_ROLE_REQUESTER)
@@ -1576,7 +1577,7 @@ void Monitor::handle_sync_heartbeat_reply(MMonSync *m)
 
 void Monitor::handle_sync_chunk(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
 
   entity_inst_t other = m->get_source_inst();
 
@@ -1654,7 +1655,7 @@ void Monitor::handle_sync_chunk(MMonSync *m)
 
 void Monitor::sync_stop()
 {
-  dout(10) << __func__ << dendl;
+  dout(9) << __func__ << dendl;
 
   assert(sync_role == SYNC_ROLE_REQUESTER);
   assert(sync_state == SYNC_STATE_CHUNKS);
@@ -1678,7 +1679,7 @@ void Monitor::sync_stop()
 
 void Monitor::sync_finish_reply_timeout()
 {
-  dout(10) << __func__ << dendl;
+  dout(9) << __func__ << dendl;
   assert(state == STATE_SYNCHRONIZING);
   assert(sync_leader.get() != NULL);
   assert(sync_role == SYNC_ROLE_REQUESTER);
@@ -1689,7 +1690,7 @@ void Monitor::sync_finish_reply_timeout()
 
 void Monitor::handle_sync_finish_reply(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
   entity_inst_t other = m->get_source_inst();
 
   if ((sync_role != SYNC_ROLE_REQUESTER)
@@ -1728,7 +1729,7 @@ void Monitor::handle_sync_finish_reply(MMonSync *m)
 
 void Monitor::handle_sync_abort(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
   /* This function's responsabilities are manifold, and they depend on
    * who we (the monitor) are and what is our role in the sync.
    *
@@ -1769,7 +1770,7 @@ void Monitor::handle_sync_abort(MMonSync *m)
 
 void Monitor::handle_sync(MMonSync *m)
 {
-  dout(10) << __func__ << " " << *m << dendl;
+  dout(9) << __func__ << " " << *m << dendl;
   switch (m->op) {
   case MMonSync::OP_START:
     handle_sync_start(m);
@@ -2015,7 +2016,7 @@ void Monitor::handle_probe_reply(MMonProbe *m)
 
 void Monitor::start_election()
 {
-  dout(10) << "start_election" << dendl;
+  dout(9) << "start_election" << dendl;
 
   cancel_probe_timeout();
 
@@ -2062,7 +2063,7 @@ void Monitor::win_election(epoch_t epoch, set<int>& active, uint64_t features)
   quorum = active;
   quorum_features = features;
   outside_quorum.clear();
-  dout(10) << "win_election, epoch " << epoch << " quorum is " << quorum
+  dout(9) << "win_election, epoch " << epoch << " quorum is " << quorum
 	   << " features are " << quorum_features
 	   << dendl;
 
@@ -2087,7 +2088,7 @@ void Monitor::lose_election(epoch_t epoch, set<int> &q, int l, uint64_t features
   quorum = q;
   outside_quorum.clear();
   quorum_features = features;
-  dout(10) << "lose_election, epoch " << epoch << " leader is mon" << leader
+  dout(9) << "lose_election, epoch " << epoch << " leader is mon" << leader
 	   << " quorum is " << quorum << " features are " << quorum_features << dendl;
 
   // let everyone currently syncing know that we are no longer the leader and
@@ -2113,6 +2114,7 @@ void Monitor::lose_election(epoch_t epoch, set<int> &q, int l, uint64_t features
 
 void Monitor::finish_election()
 {
+  dout(9) << __func__ << dendl;
   timecheck_finish();
   exited_quorum = utime_t();
   finish_contexts(g_ceph_context, waitfor_quorum);
@@ -3210,6 +3212,7 @@ bool Monitor::_ms_dispatch(Message *m)
 
     // Sync (i.e., the new slurp, but on steroids)
     case MSG_MON_SYNC:
+      dout(9) << __func__ << " " << *m << dendl;
       handle_sync(static_cast<MMonSync*>(m));
       break;
 
@@ -3284,13 +3287,16 @@ bool Monitor::_ms_dispatch(Message *m)
 	  break;
 	}
 
+        dout(9) << __func__ << " " << *m << dendl;
 	// sanitize
 	if (pm->epoch > get_epoch()) {
+          dout(9) << __func__ << " msg epoch > our epoch" << dendl;
 	  bootstrap();
 	  pm->put();
 	  break;
 	}
 	if (pm->epoch != get_epoch()) {
+          dout(9) << __func__ << " stray paxos message" << dendl;
 	  pm->put();
 	  break;
 	}
@@ -3317,6 +3323,7 @@ bool Monitor::_ms_dispatch(Message *m)
 	break;
       }
       if (!is_probing() && !is_synchronizing()) {
+        dout(9) << __func__ << " " << *m << dendl;
 	elector.dispatch(m);
       } else {
 	m->put();
